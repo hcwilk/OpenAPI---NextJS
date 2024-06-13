@@ -32,12 +32,14 @@ def generate_next_js_routes(api_spec, output_dir='api'):
 
             total_path = createSubDirs(total_path)
 
-            parts = total_path.split('/')
+            parts = route.split('/')
+            print('parts:', parts)
             for i in range(len(parts)):
-                if '-url' in parts[i]:
-                    parts[i] = "$" + "{" f"{parts[i][0:-4]}" + "}" 
+                if '{' in parts[i]:
+                    parts[i] = "$"+ f"{parts[i]}" 
 
-            route = '/'.join(parts)
+            route = '/'.join(parts)[1:]
+            print('route:', route)
 
             # create route.ts file at end of path
             file_path = os.path.join(total_path, f'route.ts')
@@ -49,7 +51,9 @@ def generate_next_js_routes(api_spec, output_dir='api'):
                 f.write(f'import {{ NextRequest, NextResponse }} from "next/server"; \n')
                 f.write(f'import axios from "axios"; \n')
                 f.write(f'import {{cookies}} from "next/headers"; \n')
-                f.write(f'import {{ GalenClient }} from "@/lib/services/galen/client/GalenClient"; \n \n')
+                f.write(f'import {{ GalenClient }} from "@/lib/services/galen/client/GalenClient"; \n')
+                f.write(f'import {{ getServerSession }} from "next-auth"; \n')
+                f.write(f'import {{ authOptions }} from "@/app/api/auth/[...nextauth]/route"; \n \n')
 
                 f.write(f'const galenClient = GalenClient.getInstance(); \n')
 
@@ -58,18 +62,24 @@ def generate_next_js_routes(api_spec, output_dir='api'):
                     f.write(f'\n')
                     f.write(f'// {summary} \n')
                     f.write(f'export async function {method.upper()}(req: NextRequest, res: NextResponse) {{\n')
+                    f.write(f'const session: any = await getServerSession(authOptions); \n')
                     f.write(f'  try {{\n')
 
                     f.write(f'    const backendUrl = process.env.BACKEND_URL; \n')
                     f.write(f'    const config = {{ \n')
                     f.write(f'        headers: {{ \n')
-                    f.write(f'       Authorization: "Bearer " + cookies().get("token")?.value \n')
+                    f.write(f'       Authorization: "Bearer " + session.accessToken, \n')
                     f.write(f'        }} \n')
                     f.write(f'    }} \n')
                     f.write(f'    const newConfig = await galenClient.getExtraHeaders(config); \n')
+                    f.write(f'    newConfig.params = newConfig.params || {{}}; \n')
 
                     params = details.get('parameters', [])
                     print('params:', params)
+                    # Separate optional and required parameters
+
+                    f.write(f'    const queryParams = req.nextUrl.searchParams; \n')
+                    
                     for param in params:
                         if isinstance(param, dict) and 'name' in param and 'in' in param:
                             name = param['name']
@@ -80,12 +90,13 @@ def generate_next_js_routes(api_spec, output_dir='api'):
                             elif param_in == 'path':
                                     f.write(f'    // Required URL parameter \n')
                                     f.write(f'    const {name} = req.nextUrl.searchParams.get("{name}"); \n')
-                            else:
-                                if param_required:
+                            if param_required:
                                     f.write(f'    // Required query parameter \n')
                                     f.write(f'    newConfig.params["{name}"] = req.nextUrl.searchParams.get("{name}"); \n')
-                                else:   
-                                    f.write(f'    newConfig.params["{name}"] = req.nextUrl.searchParams.get("{name}") || ""; \n')
+                            else:
+                                f.write(f'    if (queryParams.has("{name}")) {{ \n')
+                                f.write(f'      newConfig.params["{name}"] = queryParams.get("{name}"); \n')
+                                f.write(f'    }} \n')
 
                     if method == 'get':
                         f.write(f'    const res = await axios.{method}(backendUrl + `{route}`, newConfig); \n')
